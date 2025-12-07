@@ -119,14 +119,38 @@ async function getChatHistory(userId) {
 }
 
 /* --------------------------------------------------
-   /ask — AI ENDPOINT (READ ONLY)
+   FIREBASE AUTHENTICATION MIDDLEWARE
 ---------------------------------------------------*/
 
-app.post("/ask", async (req, res) => {
+const authenticateFirebase = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized. No token provided.' });
+  }
+  
+  const token = authHeader.split('Bearer ')[1];
+  
   try {
-    const { userId, query, timetable } = req.body;
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.userId = decodedToken.uid;
+    console.log(`✅ Authenticated user: ${req.userId}`);
+    next();
+  } catch (error) {
+    console.error('❌ Firebase auth error:', error);
+    return res.status(401).json({ error: 'Invalid or expired token.' });
+  }
+};
 
-    if (!userId) return res.status(400).json({ error: "userId is required" });
+/* --------------------------------------------------
+   /ask — AI ENDPOINT (WITH AUTHENTICATION)
+---------------------------------------------------*/
+
+app.post("/ask", authenticateFirebase, async (req, res) => {
+  try {
+    const { query, timetable } = req.body;
+    const userId = req.userId;
+    
     if (!query) return res.status(400).json({ error: "query is required" });
 
     // Fetch all user data
