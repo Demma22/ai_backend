@@ -173,7 +173,8 @@ app.post("/ask", authenticateFirebase, async (req, res) => {
     // System prompt
     const systemPrompt = `
 You are REMI — an intelligent student assistant.
-Use only the following data to answer the user's question.
+Answer all generic questions even if they are not related to the user's data.
+Use the following data to answer user's questions about their data.
 Never make up information.
 
 PROFILE:
