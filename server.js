@@ -10,17 +10,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* --------------------------------------------------
-   FIREBASE ADMIN INITIALIZATION
----------------------------------------------------*/
-
+/* ==================================================
+   🔥 FIREBASE ADMIN INITIALIZATION
+====================================================*/
 const serviceAccount = {
   project_id: process.env.FIREBASE_PROJECT_ID,
   client_email: process.env.FIREBASE_CLIENT_EMAIL,
   private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
 };
 
-// Validate Firebase credentials
 if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
   console.error("❌ Missing Firebase environment variables");
   process.exit(1);
@@ -33,35 +31,31 @@ admin.initializeApp({
 const firestore = admin.firestore();
 console.log("🔥 Firebase Admin initialized");
 
-/* --------------------------------------------------
-   DEEPSEEK SETUP
----------------------------------------------------*/
-
+/* ==================================================
+   🤖 DEEPSEEK SETUP
+====================================================*/
 const deepseek = new OpenAI({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com",
 });
 
-/* --------------------------------------------------
-   FIRESTORE READ FUNCTIONS
----------------------------------------------------*/
-
+/* ==================================================
+   🔎 FIRESTORE QUERIES
+====================================================*/
 async function getUserData(userId) {
-  if (!userId) return null;
-
   try {
     const snap = await firestore.collection("users").doc(userId).get();
     return snap.exists ? snap.data() : null;
   } catch (error) {
-    console.error("❌ Error fetching user data:", error);
+    console.error("❌ User data error:", error);
     return null;
   }
 }
 
 async function getTimetable(userId) {
   try {
-    const doc = await firestore.collection("users").doc(userId).get();
-    return doc.exists ? doc.data().timetable || {} : {};
+    const snap = await firestore.collection("users").doc(userId).get();
+    return snap.exists ? snap.data().timetable || {} : {};
   } catch (error) {
     console.error("❌ Timetable error:", error);
     return {};
@@ -70,8 +64,8 @@ async function getTimetable(userId) {
 
 async function getExams(userId) {
   try {
-    const doc = await firestore.collection("users").doc(userId).get();
-    return doc.exists ? doc.data().exams || [] : [];
+    const snap = await firestore.collection("users").doc(userId).get();
+    return snap.exists ? snap.data().exams || [] : [];
   } catch (error) {
     console.error("❌ Exams error:", error);
     return [];
@@ -80,8 +74,8 @@ async function getExams(userId) {
 
 async function getGPA(userId) {
   try {
-    const doc = await firestore.collection("users").doc(userId).get();
-    return doc.exists ? doc.data().gpa_data || {} : {};
+    const snap = await firestore.collection("users").doc(userId).get();
+    return snap.exists ? snap.data().gpa_data || {} : {};
   } catch (error) {
     console.error("❌ GPA error:", error);
     return {};
@@ -90,8 +84,8 @@ async function getGPA(userId) {
 
 async function getCourseUnits(userId) {
   try {
-    const doc = await firestore.collection("users").doc(userId).get();
-    return doc.exists ? doc.data().units || {} : {};
+    const snap = await firestore.collection("users").doc(userId).get();
+    return snap.exists ? snap.data().units || {} : {};
   } catch (error) {
     console.error("❌ Units error:", error);
     return {};
@@ -100,13 +94,8 @@ async function getCourseUnits(userId) {
 
 async function getChatHistory(userId) {
   try {
-    const chatRef = firestore
-      .collection("users")
-      .doc(userId)
-      .collection("chat_history");
-
-    const snap = await chatRef.orderBy("timestamp", "desc").limit(5).get();
-
+    const ref = firestore.collection("users").doc(userId).collection("chat_history");
+    const snap = await ref.orderBy("timestamp", "desc").limit(5).get();
     return snap.docs.map((d) => ({
       message: d.data().message,
       isUser: d.data().isUser,
@@ -118,42 +107,40 @@ async function getChatHistory(userId) {
   }
 }
 
-/* --------------------------------------------------
-   FIREBASE AUTHENTICATION MIDDLEWARE
----------------------------------------------------*/
-
+/* ==================================================
+   🔐 FIREBASE AUTH MIDDLEWARE
+====================================================*/
 const authenticateFirebase = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized. No token provided.' });
+
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized. No token provided." });
   }
-  
-  const token = authHeader.split('Bearer ')[1];
-  
+
+  const token = authHeader.split("Bearer ")[1];
+
   try {
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    req.userId = decodedToken.uid;
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.userId = decoded.uid;
     console.log(`✅ Authenticated user: ${req.userId}`);
     next();
   } catch (error) {
-    console.error('❌ Firebase auth error:', error);
-    return res.status(401).json({ error: 'Invalid or expired token.' });
+    console.error("❌ Firebase auth error:", error);
+    return res.status(401).json({ error: "Invalid or expired token." });
   }
 };
 
-/* --------------------------------------------------
-   /ask — AI ENDPOINT (WITH AUTHENTICATION)
----------------------------------------------------*/
-
+/* ==================================================
+   💬 /ask — AI ENDPOINT
+====================================================*/
 app.post("/ask", authenticateFirebase, async (req, res) => {
   try {
     const { query, timetable } = req.body;
     const userId = req.userId;
-    
-    if (!query) return res.status(400).json({ error: "query is required" });
 
-    // Fetch all user data
+    if (!query) return res.status(400).json({ error: "Query is required" });
+
+    /* ---- Fetch user data ---- */
     const profile = await getUserData(userId);
     const userTimetable = timetable || (await getTimetable(userId));
     const exams = await getExams(userId);
@@ -161,6 +148,7 @@ app.post("/ask", authenticateFirebase, async (req, res) => {
     const courseUnits = await getCourseUnits(userId);
     const lastChats = await getChatHistory(userId);
 
+    /* ---- Prepare profile ---- */
     const formattedProfile = profile
       ? {
           nickname: profile.nickname,
@@ -170,50 +158,38 @@ app.post("/ask", authenticateFirebase, async (req, res) => {
         }
       : {};
 
-    // System prompt
+    /* ---- DATE & TIME (Uganda Timezone) ---- */
+    const now = new Date();
+    const UGTime = now.toLocaleString("en-UG", { timeZone: "Africa/Kampala" });
+
+    /* ---- System prompt ---- */
     const systemPrompt = `
-You are REMI — a friendly, helpful student assistant.
+You are REMI — a friendly academic assistant.
 
-You have access to the user’s academic data (timetable, courses, exams, GPA, chat history). 
-Use this information ONLY when the user's question is specifically about their academic life.
+You may use the user’s academic data **only if their question is academic**.
 
-If the user asks a general, unrelated, or open-ended question, answer normally using general knowledge — do NOT limit yourself to the academic data.
+For general questions (life, science, date, time, advice, etc.) answer normally.
 
-Important:
-- Do NOT invent academic facts that are missing from the database.
-- If academic information is missing, state that it is not available.
-- For general questions (science, life, advice, facts, definitions, etc.) answer freely.
-- Keep your answers short (1–3 paragraphs) and conversational.
+📌 **Current Date & Time Info (Uganda):**
+- Full Date & Time: ${UGTime}
+- ISO: ${now.toISOString()}
 
-Here is the user’s academic data (use only if relevant):
-
-
-PROFILE:
-${JSON.stringify(formattedProfile, null, 2)}
-
-TIMETABLE:
-${JSON.stringify(userTimetable, null, 2)}
-
-EXAMS:
-${JSON.stringify(exams, null, 2)}
-
-GPA:
-${JSON.stringify(gpa, null, 2)}
-
-COURSE UNITS:
-${JSON.stringify(courseUnits, null, 2)}
-
-RECENT CHATS:
-${JSON.stringify(lastChats, null, 2)}
+📌 USER DATA (only use if relevant):
+PROFILE: ${JSON.stringify(formattedProfile, null, 2)}
+TIMETABLE: ${JSON.stringify(userTimetable, null, 2)}
+EXAMS: ${JSON.stringify(exams, null, 2)}
+GPA: ${JSON.stringify(gpa, null, 2)}
+COURSE UNITS: ${JSON.stringify(courseUnits, null, 2)}
+RECENT CHATS: ${JSON.stringify(lastChats, null, 2)}
 
 RULES:
-1. If data is missing, politely say you don't have that information.
-2. Never invent information.
+1. If data is missing, say it's unavailable.
+2. Do NOT invent academic information.
 3. Keep answers short (1–3 paragraphs).
-4. Friendly and helpful tone.
+4. Friendly & helpful tone.
 `;
 
-    // Send request to DeepSeek
+    /* ---- AI request ---- */
     const completion = await deepseek.chat.completions.create({
       model: "deepseek-chat",
       messages: [
@@ -236,17 +212,13 @@ RULES:
     });
   } catch (err) {
     console.error("❌ AI Error:", err);
-    res.status(500).json({
-      error: "AI processing failed",
-      details: err.message,
-    });
+    res.status(500).json({ error: "AI processing failed", details: err.message });
   }
 });
 
-/* --------------------------------------------------
-   HEALTH CHECK
----------------------------------------------------*/
-
+/* ==================================================
+   ❤️ HEALTH CHECK
+====================================================*/
 app.get("/health", async (req, res) => {
   try {
     await firestore.collection("users").limit(1).get();
@@ -264,10 +236,9 @@ app.get("/health", async (req, res) => {
   }
 });
 
-/* --------------------------------------------------
-   START SERVER
----------------------------------------------------*/
-
+/* ==================================================
+   🚀 START SERVER
+====================================================*/
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log(`🚀 REMI backend running on port ${PORT}`)
